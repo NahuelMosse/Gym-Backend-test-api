@@ -7,6 +7,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const { Pool } = require('pg');
+const { v4: uuidv4 } = require('uuid');
+
 
 const app = express();
 app.use(cors());
@@ -27,54 +29,24 @@ pool.on('error', (err, client) => {
 });
 
 const ACCESS_SECRET = process.env.ACCESS_SECRET || 'dev_access_secret_please_change';
+if (!process.env.ACCESS_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('ACCESS_SECRET is required in production');
+}
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'dev_refresh_secret_please_change';
 const ACCESS_EXPIRES_IN = process.env.ACCESS_EXPIRES_IN || '1d';
 const REFRESH_EXPIRES_IN = process.env.REFRESH_EXPIRES_IN || '7d';
 
-const users = [
-  { 
-    id: '1',
-    email: 'alice@example.com', 
-    name: 'Alice', 
-    passwordHash: bcrypt.hashSync('password123', 10),
-    created_at: new Date('2024-01-01T00:00:00Z').toISOString(),
-    updated_at: new Date().toISOString()
-  },
-  { 
-    id: '2', 
-    email: 'bob@example.com', 
-    name: 'Bob', 
-    passwordHash: bcrypt.hashSync('secret456', 10),
-    created_at: new Date('2024-01-02T00:00:00Z').toISOString(),
-    updated_at: new Date().toISOString()
-  },
-];
+// Los tokens se pierden al reiniciar el servidor
 const refreshTokenStore = new Map();
 
-// Tabla para refresh tokens (si no existe)
-const CREATE_REFRESH_TOKENS_TABLE = `
-CREATE TABLE IF NOT EXISTS RefreshTokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-    token TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-`;
-
-// Inicializar tabla de refresh tokens
-pool.query(CREATE_REFRESH_TOKENS_TABLE).catch(err => {
-  console.error('Error creating refresh tokens table:', err);
-});
-
 // Función para encontrar usuario por email con su auth credential
-async function findUserByEmail(email) {
+async function findUserByEmailLocal(email) {
   const query = `
     SELECT u.*, ac.password 
     FROM "User" u
     JOIN AuthProvider ap ON u.id = ap.user_id
     JOIN AuthCredential ac ON ap.id = ac.auth_provider_id
-    WHERE u.email = $1 AND ap.provider = 'email'
+    WHERE u.email = $1 AND ap.provider = 'local'
   `;
   const result = await pool.query(query, [email]);
   return result.rows[0];
@@ -84,31 +56,6 @@ async function findUserByEmail(email) {
 async function findUserById(userId) {
   const result = await pool.query('SELECT * FROM "User" WHERE id = $1', [userId]);
   return result.rows[0];
-}
-
-// Función para guardar refresh token
-async function saveRefreshToken(userId, token) {
-  await pool.query(
-    'INSERT INTO RefreshTokens (user_id, token) VALUES ($1, $2)',
-    [userId, token]
-  );
-}
-
-// Función para verificar refresh token
-async function verifyRefreshToken(userId, token) {
-  const result = await pool.query(
-    'SELECT * FROM RefreshTokens WHERE user_id = $1 AND token = $2',
-    [userId, token]
-  );
-  return result.rows.length > 0;
-}
-
-// Función para actualizar refresh token
-async function updateRefreshToken(oldToken, newToken, userId) {
-  await pool.query(
-    'UPDATE RefreshTokens SET token = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2 AND token = $3',
-    [newToken, userId, oldToken]
-  );
 }
 
 // Función para obtener todos los ejercicios
@@ -122,7 +69,7 @@ async function getAllExercises() {
   return result.rows;
 }
 
-// Función para obtener ejercicios por usuario
+/* Función para obtener ejercicios por usuario
 async function getExercisesByUser(userId) {
   const result = await pool.query(`
     SELECT e.*, u.name as creator_name 
@@ -132,7 +79,7 @@ async function getExercisesByUser(userId) {
     ORDER BY e.created_at DESC
   `, [userId]);
   return result.rows;
-}
+} */
 
 // Función para crear un nuevo ejercicio
 async function createExercise(exerciseData) {
@@ -153,9 +100,24 @@ function generateRefreshToken(user) {
   return jwt.sign({ userId: user.id }, REFRESH_SECRET, { expiresIn: REFRESH_EXPIRES_IN });
 }
 
-function findUserByEmail(email) {
-  return users.find(u => u.email.toLowerCase() === email.toLowerCase());
-}
+// Middleware para autenticación de Tokens
+const authenticateToken = (req, res, next) => {
+  const auth = req.headers.authorization || '';
+  const parts = auth.split(' ');
+  
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return res.status(401).json({ message: 'Missing or invalid Authorization header' });
+  }
+
+  try {
+    const token = parts[1];
+    const payload = jwt.verify(token, ACCESS_SECRET);
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
 
 // ===== ENDPOINTS DE AUTENTICACIÓN =====
 
@@ -164,17 +126,16 @@ app.post('/api/v1/auth/login', async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
 
-    const user = findUserByEmail(email);
+    const user = await findUserByEmailLocal(email);
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
 
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
     
-    // Guardar el refresh token en la base de datos
-    await saveRefreshToken(user.id, refreshToken);
+    refreshTokenStore.set(user.id, refreshToken);
 
     // Remover el password de la respuesta
     const { password: _, ...userWithoutPassword } = user;
@@ -198,9 +159,8 @@ app.post('/api/v1/auth/refresh', async (req, res) => {
     const payload = jwt.verify(refresh_token, REFRESH_SECRET);
     const userId = payload.userId;
 
-    // Verificar si el refresh token existe en la base de datos
-    const tokenValid = await verifyRefreshToken(userId, refresh_token);
-    if (!tokenValid) return res.status(401).json({ message: 'Invalid refresh token' });
+    const stored = refreshTokenStore.get(userId);
+    if (!stored || stored !== refresh_token) return res.status(401).json({ message: 'Invalid refresh token' });
 
     // Obtener usuario
     const user = await findUserById(userId);
@@ -208,9 +168,7 @@ app.post('/api/v1/auth/refresh', async (req, res) => {
 
     const newRefreshToken = generateRefreshToken(user);
     const newAccessToken = generateAccessToken(user);
-
-    // Actualizar el refresh token en la base de datos
-    await updateRefreshToken(refresh_token, newRefreshToken, userId);
+    refreshTokenStore.set(user.id, newRefreshToken);
 
     return res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
   } catch (err) {
@@ -218,27 +176,20 @@ app.post('/api/v1/auth/refresh', async (req, res) => {
   }
 });
 
-app.get('/api/v1/auth/me', async (req, res) => {
+app.get('/api/v1/auth/me', authenticateToken, async (req, res) => {
   try {
-    const auth = req.headers.authorization || '';
-    const parts = auth.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ message: 'Missing or invalid Authorization header' });
-
-    const token = parts[1];
-    const payload = jwt.verify(token, ACCESS_SECRET);
-
     const user = await findUserById(payload.userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
     return res.json(user);
 
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    return res.status(401).json({ message: 'Error on endpoint /api/v1/auth/me' });
   }
 });
 
 // ===== ENDPOINTS DE EJERCICIOS =====
 
-// Obtener todos los ejercicios (públicos)
+// Obtener todos los ejercicios
 app.get('/api/v1/exercises', async (req, res) => {
   try {
     const exercises = await getAllExercises();
@@ -249,7 +200,7 @@ app.get('/api/v1/exercises', async (req, res) => {
   }
 });
 
-// Obtener ejercicios del usuario actual
+/* Obtener ejercicios creados por un usuario
 app.get('/api/v1/my-exercises', async (req, res) => {
   try {
     const auth = req.headers.authorization || '';
@@ -264,23 +215,21 @@ app.get('/api/v1/my-exercises', async (req, res) => {
   } catch (err) {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
-});
+}); */
 
 // Crear un nuevo ejercicio
-app.post('/api/v1/exercises', async (req, res) => {
+app.post('/api/v1/exercises', authenticateToken, async (req, res) => {
   try {
-    const auth = req.headers.authorization || '';
-    const parts = auth.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ message: 'Missing or invalid Authorization header' });
+    const user = await findUserById(payload.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-    const token = parts[1];
-    const payload = jwt.verify(token, ACCESS_SECRET);
-    
     const { name, description, is_public } = req.body;
-    if (!name) return res.status(400).json({ message: 'Exercise name is required' });
-
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ message: 'Valid exercise name is required' });
+    }
     // Generar UUID para el nuevo ejercicio
-    const { v4: uuidv4 } = require('uuid');
     const exerciseId = uuidv4();
 
     const exerciseData = {
@@ -294,9 +243,6 @@ app.post('/api/v1/exercises', async (req, res) => {
     const newExercise = await createExercise(exerciseData);
     res.status(201).json(newExercise);
   } catch (err) {
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid or expired token' });
-    }
     console.error('Create exercise error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
