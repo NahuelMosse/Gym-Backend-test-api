@@ -108,7 +108,7 @@ async function seedDatabase() {
     console.log('👥 Insertando usuarios...');
     for (const user of users) {
       await client.query(
-        'INSERT INTO "User" (id, email, name, updated_at, created_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+        'INSERT INTO "User" (id, email, name) VALUES ($1, $2, $3)',
         [user.id, user.email, user.name]
       );
       console.log(`   ✅ Usuario creado: ${user.name} (${user.email})`);
@@ -121,14 +121,14 @@ async function seedDatabase() {
       
       // Crear AuthProvider
       await client.query(
-        'INSERT INTO AuthProvider (id, user_id, provider, updated_at, created_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+        'INSERT INTO AuthProvider (id, user_id, provider) VALUES ($1, $2, $3)',
         [authProviderId, user.id, 'local']
       );
 
       // Crear AuthCredential (password: "password123")
       const passwordHash = await bcrypt.hash('password123', 10);
       await client.query(
-        'INSERT INTO AuthCredential (id, auth_provider_id, password, updated_at, created_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+        'INSERT INTO AuthCredential (id, auth_provider_id, password) VALUES ($1, $2, $3)',
         [uuidv4(), authProviderId, passwordHash]
       );
       
@@ -148,8 +148,8 @@ async function seedDatabase() {
       const isPublic = Math.random() > 0.3; // 70% públicos, 30% privados
       
       await client.query(
-        `INSERT INTO Exercise (id, name, description, creator_user_id, public, updated_at, created_at) 
-         VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        `INSERT INTO Exercise (id, name, description, creator_user_id, public) 
+         VALUES ($1, $2, $3, $4, $5)`,
         [uuidv4(), exercise.name, exercise.description, creatorUserId, isPublic]
       );
       
