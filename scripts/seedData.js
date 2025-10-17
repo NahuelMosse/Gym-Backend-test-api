@@ -1,6 +1,10 @@
-const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
+import { Pool } from 'pg';
+import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
+import dotenv from 'dotenv';
+
+// Cargar variables de entorno
+dotenv.config();
 
 // Configuración de la base de datos
 const pool = new Pool({
@@ -99,9 +103,9 @@ async function seedDatabase() {
 
     // 1. Limpiar datos existentes (opcional - comentar si no quieres borrar datos existentes)
     console.log('🧹 Limpiando datos existentes...');
-    await client.query('DELETE FROM AuthCredential');
-    await client.query('DELETE FROM AuthProvider');
-    await client.query('DELETE FROM Exercise');
+    await client.query('DELETE FROM "AuthCredential"');
+    await client.query('DELETE FROM "AuthProvider"');
+    await client.query('DELETE FROM "Exercise"');
     await client.query('DELETE FROM "User"');
 
     // 2. Insertar usuarios
@@ -121,14 +125,14 @@ async function seedDatabase() {
       
       // Crear AuthProvider
       await client.query(
-        'INSERT INTO AuthProvider (id, user_id, provider) VALUES ($1, $2, $3)',
+        'INSERT INTO "AuthProvider" (id, user_id, provider) VALUES ($1, $2, $3)',
         [authProviderId, user.id, 'local']
       );
 
       // Crear AuthCredential (password: "password123")
       const passwordHash = await bcrypt.hash('password123', 10);
       await client.query(
-        'INSERT INTO AuthCredential (id, auth_provider_id, password) VALUES ($1, $2, $3)',
+        'INSERT INTO "AuthCredential" (id, auth_provider_id, password) VALUES ($1, $2, $3)',
         [uuidv4(), authProviderId, passwordHash]
       );
       
@@ -148,7 +152,7 @@ async function seedDatabase() {
       const isPublic = Math.random() > 0.3; // 70% públicos, 30% privados
       
       await client.query(
-        `INSERT INTO Exercise (id, name, description, creator_user_id, public) 
+        `INSERT INTO "Exercise" (id, name, description, creator_user_id, public) 
          VALUES ($1, $2, $3, $4, $5)`,
         [uuidv4(), exercise.name, exercise.description, creatorUserId, isPublic]
       );
@@ -179,12 +183,8 @@ async function seedDatabase() {
   }
 }
 
-// Ejecutar el seed si el script se llama directamente
-if (require.main === module) {
-  seedDatabase().catch(error => {
-    console.error('❌ Error fatal:', error);
-    process.exit(1);
-  });
-}
-
-module.exports = seedDatabase;
+// Ejecutar el seed directamente
+seedDatabase().catch(error => {
+  console.error('❌ Error fatal:', error);
+  process.exit(1);
+});

@@ -1,13 +1,15 @@
 // Dev Auth Server (self-contained)
 // Run inside dev_auth_server: npm install && node server.js
 
-require('dotenv').config();
-const express = require('express');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const cors = require('cors');
-const { Pool } = require('pg');
-const { v4: uuidv4 } = require('uuid');
+import dotenv from 'dotenv';
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import cors from 'cors';
+import { Pool } from 'pg';
+import { v4 as uuidv4 } from 'uuid';
+
+dotenv.config();
 
 
 const app = express();
@@ -44,8 +46,8 @@ async function findUserByEmailLocal(email) {
   const query = `
     SELECT u.*, ac.password 
     FROM "User" u
-    JOIN AuthProvider ap ON u.id = ap.user_id
-    JOIN AuthCredential ac ON ap.id = ac.auth_provider_id
+    JOIN "AuthProvider" ap ON u.id = ap.user_id
+    JOIN "AuthCredential" ac ON ap.id = ac.auth_provider_id
     WHERE u.email = $1 AND ap.provider = 'local'
   `;
   const result = await pool.query(query, [email]);
@@ -62,30 +64,18 @@ async function findUserById(userId) {
 async function getAllExercises() {
   const result = await pool.query(`
     SELECT e.*, u.name as creator_name 
-    FROM Exercise e
+    FROM "Exercise" e
     JOIN "User" u ON e.creator_user_id = u.id
     ORDER BY e.created_at DESC
   `);
   return result.rows;
 }
 
-/* Función para obtener ejercicios por usuario
-async function getExercisesByUser(userId) {
-  const result = await pool.query(`
-    SELECT e.*, u.name as creator_name 
-    FROM Exercise e
-    JOIN "User" u ON e.creator_user_id = u.id
-    WHERE e.creator_user_id = $1
-    ORDER BY e.created_at DESC
-  `, [userId]);
-  return result.rows;
-} */
-
 // Función para crear un nuevo ejercicio
 async function createExercise(exerciseData) {
   const { id, name, description, creator_user_id, is_public } = exerciseData;
   const result = await pool.query(`
-    INSERT INTO Exercise (id, name, description, creator_user_id, public, created_at, updated_at)
+    INSERT INTO "Exercise" (id, name, description, creator_user_id, public, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     RETURNING *
   `, [id, name, description, creator_user_id, is_public || false]);
@@ -199,23 +189,6 @@ app.get('/api/v1/exercises', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
-/* Obtener ejercicios creados por un usuario
-app.get('/api/v1/my-exercises', async (req, res) => {
-  try {
-    const auth = req.headers.authorization || '';
-    const parts = auth.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ message: 'Missing or invalid Authorization header' });
-
-    const token = parts[1];
-    const payload = jwt.verify(token, ACCESS_SECRET);
-    
-    const exercises = await getExercisesByUser(payload.userId);
-    res.json(exercises);
-  } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
-  }
-}); */
 
 // Crear un nuevo ejercicio
 app.post('/api/v1/exercises', authenticateToken, async (req, res) => {

@@ -1,5 +1,8 @@
-const { Pool } = require('pg');
-const { v4: uuidv4 } = require('uuid');
+import { Pool } from 'pg';
+import dotenv from 'dotenv';
+
+// Cargar variables de entorno
+dotenv.config();
 
 // Configuración de la base de datos
 const pool = new Pool({

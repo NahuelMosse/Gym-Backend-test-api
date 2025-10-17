@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "description": "Development auth server for Gym-App (self-contained)",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js",
     "seed": "node scripts/seedData.js",
     "seed:dev": "SET NODE_ENV=development && node scripts/seedData.js",
+    "migrate": "node scripts/createTables.js",
     "dev": "nodemon server.js"
   },
   "author": "",
